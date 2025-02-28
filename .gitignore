@@ -23,6 +23,8 @@ docs/site/
 # environment.
 Manifest.toml
 
+scripts/
 temp/
+full_data/
 .env/
 .python-version
