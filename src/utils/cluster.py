@@ -33,6 +33,8 @@ def label_clusters(data_array, structure=None):
 def label_and_filter(ds,mask_dim='mask',area_dim='areas',label_dim='labeled_clusters',label_filtered_dim='labeled_clusters_filtered',AREA_THRESHOLD=500000):
     """
     Filters labeled clusters which area is smaller than AREA_THRESHOLD
+    #If is desired to keep timestamps with clusters, then:
+    #ds.where(ds.has_clusters,drop=True)
     """
     ds[label_dim] = label_clusters(ds[mask_dim])
     ds["has_clusters"] = False
