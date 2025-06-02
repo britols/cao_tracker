@@ -23,8 +23,13 @@ docs/site/
 # environment.
 Manifest.toml
 
-scripts/
+src/cao_tracker.egg-info/
+src/utils/__pycache__
+
+results/
+data/subset_t2min.nc
+
 temp/
-full_data/
+data/full_data/
 .env/
 .python-version

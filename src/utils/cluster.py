@@ -29,35 +29,94 @@ def calculate_grid_distances(data_array,latitude_dim_name='latitude', R=6371,lon
 
     return lon_distance, lat_distance  
 
-def label_clusters(data_array, structure=None):
-    """
-    Defines clusters in data_array and labels it. Structure can be given to change how ndimage clusters points together.
-    """
-    labeled_array, num_features = ndimage.label(data_array.values, structure=structure) #num_features is ignored
-    labeled_xarray = array_to_xarray(labeled_array,data_array)
-    return labeled_xarray
+def label_filter_and_merge(anomaly_data, area_data,  distance_data=None,threshold=-1.5, area_threshold=500000, distance_threshold = 1000):
+    """Process one day: mask -> label -> filter by area"""
+    
+    # Step 1: Create mask
+    mask = anomaly_data <= threshold
+    
+    # Step 2: Label connected regions
+    labeled_array, _ = ndimage.label(mask)
+    
+    # Step 3: Filter by area
+    if labeled_array.max() == 0:  # No regions found
+        return np.zeros_like(labeled_array)
+    
+    # Calculate areas for each label
+    unique_labels = np.unique(labeled_array)
+    areas = ndimage.sum_labels(area_data, labeled_array, unique_labels)
+    
+    # Keep only large enough regions
+    valid_labels = unique_labels[(areas > area_threshold) & (unique_labels > 0)]
+    
+    # Create filtered result
+    filtered_result = np.where(np.isin(labeled_array, valid_labels), labeled_array, 0)
+    
+    if(len(valid_labels)>=2):
+        filtered_result = merge_nearby_labels_2d(filtered_result, distance_array=distance_data,distance_threshold_km=distance_threshold)
 
-def label_and_filter(ds,mask_dim='mask',area_dim='areas',label_dim='labeled_clusters',label_filtered_dim='labeled_clusters_filtered',AREA_THRESHOLD=500000):
-    """
-    Filters labeled clusters which area is smaller than AREA_THRESHOLD
-    #If is desired to keep timestamps with clusters, then:
-    #ds.where(ds.has_clusters,drop=True)
-    """
-    ds[label_dim] = label_clusters(ds[mask_dim])
-    ds["has_clusters"] = False
-    clusters_label = np.unique(ds[label_dim].values)
-    areas = ndimage.sum_labels(ds[area_dim],ds[label_dim],clusters_label)
-    cluster_pd = pd.DataFrame({"label": clusters_label,"area": areas})
-    cluster_pd = cluster_pd[cluster_pd['area']>AREA_THRESHOLD]
-    cluster_pd = cluster_pd[cluster_pd['label']>0]
-    if not cluster_pd.empty:
-        cluster_pd = cluster_pd.reset_index()
-        cluster_pd = cluster_pd.drop(['index'],axis=1,inplace=False)
-        ds[label_filtered_dim] = ds[label_dim]*ds[label_dim].isin(cluster_pd['label'])
-        ds["has_clusters"] = True
-    else:
-        ds[label_filtered_dim]=np.minimum(ds[label_dim], 0)
-    return ds
+    return filtered_result
+
+def merge_nearby_labels_2d(labeled_array,distance_array=None,distance_threshold_km=1000,pixel_res_km=None):
+    """Merge nearby labels in a 2D array"""
+    unique_labels = np.unique(labeled_array)
+    unique_labels = unique_labels[unique_labels > 0]
+    
+    if len(unique_labels) <= 1:
+        return labeled_array  # Nothing to merge
+    
+    # Calculate areas for prioritization
+    label_areas = {label: np.sum(labeled_array == label) for label in unique_labels}
+    
+    # Vectorized distance calculation
+    regions_stack = np.stack([
+        (labeled_array == label) for label in unique_labels
+    ], axis=0)
+    
+    distance_stack = np.stack([
+        ndimage.distance_transform_edt(~regions_stack[i])
+        for i in range(len(unique_labels))
+    ], axis=0)
+    
+    if distance_array is not None:
+        labeled_mask = labeled_array > 0
+        pixel_res_km = np.mean(distance_array[labeled_mask]) if np.sum(labeled_mask) > 0 else np.mean(distance_array)
+
+    # Find pairs to merge
+    min_distances = {}
+    for i, label1 in enumerate(unique_labels):
+        for j, label2 in enumerate(unique_labels[i+1:], i+1):
+            distances_at_region_j = distance_stack[i][regions_stack[j]]
+            min_pixel_dist = distances_at_region_j.min()
+            min_km_dist = min_pixel_dist * pixel_res_km
+            min_distances[(label1, label2)] = min_km_dist
+    
+    # Union-Find with area prioritization
+    parent = {label: label for label in unique_labels}
+    
+    def find(x):
+        if parent[x] != x:
+            parent[x] = find(parent[x])
+        return parent[x]
+    
+    for (label1, label2), distance in min_distances.items():
+        if distance < distance_threshold_km:
+            root1, root2 = find(label1), find(label2)
+            
+            # Larger area wins
+            if label_areas[root1] >= label_areas[root2]:
+                parent[root2] = root1
+            else:
+                parent[root1] = root2
+    
+    # Apply merging
+    merged_labels = labeled_array.copy()
+    for label in unique_labels:
+        root_label = find(label)
+        if root_label != label:
+            merged_labels[merged_labels == label] = root_label
+    
+    return merged_labels
 
 def get_cluster_info(ds,label_dim="labeled_clusters",label_filtered_dim='labeled_clusters_filtered',anomaly_dim="scaled_anomaly",area_dim='areas',time_dim='time'):
     """
@@ -118,6 +177,118 @@ def get_cluster_info(ds,label_dim="labeled_clusters",label_filtered_dim='labeled
 
     return cluster_pd
 
+def identify_cao_chains(cluster_df):
+    """
+    Identify chains of consecutive days with CAO activity
+    Returns DataFrame with chain information
+    """
+    # Get unique dates and sort them
+    dates = sorted(cluster_df['time'].dt.date.unique())
+    
+    chains = []
+    current_chain = []
+    chain_id = 1
+    
+    for i, date in enumerate(dates):
+        if not current_chain:
+            # Start new chain
+            current_chain = [date]
+        else:
+            # Check if current date is consecutive to last date in chain
+            prev_date = current_chain[-1]
+            if (date - prev_date).days == 1:
+                # Continue current chain
+                current_chain.append(date)
+            else:
+                # End current chain and start new one
+                if len(current_chain) > 0:
+                    chains.append({
+                        'chain_id': chain_id,
+                        'start_date': current_chain[0],
+                        'end_date': current_chain[-1],
+                        'duration_days': len(current_chain),
+                        'dates': current_chain.copy()
+                    })
+                    chain_id += 1
+                current_chain = [date]
+    
+    # Don't forget the last chain
+    if len(current_chain) > 0:
+        chains.append({
+            'chain_id': chain_id,
+            'start_date': current_chain[0],
+            'end_date': current_chain[-1],
+            'duration_days': len(current_chain),
+            'dates': current_chain.copy()
+        })
+    
+    return pd.DataFrame(chains)
+
+def calculate_chain_intensity_metrics(chain_info, cluster_df):
+    """
+    Calculate intensity metrics for each chain
+    """
+    chain_metrics = []
+    
+    for _, chain in chain_info.iterrows():
+        # Get all clusters for this chain's date range
+        chain_dates = pd.to_datetime(chain['dates']).date
+        chain_clusters = cluster_df[cluster_df['time'].dt.date.isin(chain_dates)]
+        
+        if chain_clusters.empty:
+            continue
+            
+        # Calculate intensity metrics
+        metrics = {
+            'chain_id': chain['chain_id'],
+            'start_date': chain['start_date'],
+            'end_date': chain['end_date'],
+            'duration_days': chain['duration_days'],
+            
+            # Area metrics
+            'max_area_km2': chain_clusters['area'].max(),
+            'mean_area_km2': chain_clusters['area'].mean(),
+            'total_area_km2': chain_clusters['area'].sum(),
+            
+            # Temperature metrics (scaled anomaly - more negative = colder)
+            'min_temperature': chain_clusters['min_value'].min(),  # Coldest temperature
+            'mean_min_temperature': chain_clusters['min_value'].mean(),
+            'mean_temperature': chain_clusters['mean'].mean(),
+            
+            # Spatial extent
+            'max_lat': chain_clusters['cm_lat'].max(),
+            'min_lat': chain_clusters['cm_lat'].min(),
+            'max_lon': chain_clusters['cm_lon'].max(),
+            'min_lon': chain_clusters['cm_lon'].min(),
+            
+            # Cluster count metrics
+            'total_clusters': len(chain_clusters),
+            'max_clusters_per_day': chain_clusters.groupby(chain_clusters['time'].dt.date).size().max(),
+            'mean_clusters_per_day': chain_clusters.groupby(chain_clusters['time'].dt.date).size().mean(),
+            
+            # Additional metrics
+            'max_cluster_area_day': chain_clusters.loc[chain_clusters['area'].idxmax(), 'time'].date(),
+            'coldest_temp_day': chain_clusters.loc[chain_clusters['min_value'].idxmin(), 'time'].date(),
+        }
+        
+        chain_metrics.append(metrics)
+    
+    return pd.DataFrame(chain_metrics)
+
+def add_chain_id_to_clusters(cluster_df, chain_info):
+    """
+    Add chain_id to the original cluster dataframe
+    """
+    cluster_df['chain_id'] = 0  # Default for clusters not in chains
+    
+    for _, chain in chain_info.iterrows():
+        chain_dates = pd.to_datetime(chain['dates']).date
+        mask = cluster_df['time'].dt.date.isin(chain_dates)
+        cluster_df.loc[mask, 'chain_id'] = chain['chain_id']
+    
+    return cluster_df
+
+
 def apply_binary_morph(data_array,s=np.ones((3,3)),method='dilation'):
     """
     Apply binary structure (s) to data_array using one of the methods available ['dilation','erosion','closing','fill_holes']
@@ -148,3 +319,24 @@ def gaussian_filter(data_set,center_lon,center_lat,b=0.05,lat_dim_name="latitude
     Y=data_set[lat_dim_name].broadcast_like(data_set)
     G = 1/(2*np.pi*b**2) * np.exp(-((np.deg2rad(Y)-np.deg2rad(center_lat))**2 + (np.deg2rad(X)-np.deg2rad(center_lon))**2)/(2*b**2))
     return(G)
+
+
+def process_in_chunks(ds, label_cao_output_dir,chunk_size_years=10):
+    years = pd.to_datetime(ds.time.values).year
+    unique_years = np.unique(years)
+    
+    for i in range(0, len(unique_years), chunk_size_years):
+        year_chunk = unique_years[i:i + chunk_size_years]
+        start_year, end_year = year_chunk[0], year_chunk[-1]
+        
+        print(f"Processing years {start_year}-{end_year}...")
+        ds_chunk = ds.sel(time=slice(str(start_year), str(end_year)))
+        
+        # Your processing logic here
+        # ... apply clustering, filtering, etc.
+        
+        # Save results
+        ds_chunk.to_netcdf(f"{label_cao_output_dir}/clusters_{start_year}_{end_year}.nc", mode="w")
+        
+        # Optional: explicitly free memory
+        del ds_chunk

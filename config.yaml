@@ -1,0 +1,30 @@
+algorithm:
+  area_threshold: 500000
+  stdev_threshold: -1.5
+  temperature_var: daily_t2_min
+  time_group: season
+  time_group_period: DJF
+dataset:
+  anomaly_dim: anomaly_scaled
+  area_dim: areas
+  label_dim: labeled_clusters
+  label_filtered_dim: labeled_clusters_filtered
+  latitude_dim_name: latitude
+  longitude_dim_name: longitude
+  mask_dim: mask
+  time_dim: time
+files:
+  cao_chain_table: cao_chains.csv
+  cao_cluster_table: cao_clusters.csv
+  climatology_file: scaled_anomalies.nc
+  default_config: config.yaml
+  mean_file: seasonal_mean.nc
+  stdev_file: seasonal_stdev.nc
+paths:
+  csv_folder: results/csv/
+  data_path: data/
+  era5_path: data/full_data/era5_raw/
+  image_folder: results/img/
+  labeled_nc_folder: results/nc/labeled_nc/
+  nc_folder: results/nc/
+  test_path: test/

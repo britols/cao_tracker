@@ -38,7 +38,7 @@ class AlgorithmConfig:
     min_stdev_threshold: float = 3
     # Minimum cluster area in km²
     area_threshold: float = 500000
-    
+    distance_threshold_km: float = 1000
     # Time grouping parameters
     time_group: str = 'season'
     time_group_period: str = 'DJF'  # December-January-February
