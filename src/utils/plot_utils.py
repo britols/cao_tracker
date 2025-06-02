@@ -23,12 +23,12 @@ def da_plot(da, proj_from=ccrs.PlateCarree(),cmap='viridis', type="plot"):
     else:
         da.plot(transform=proj_from,cmap=cmap)
     
-def da_plot_zero_centered(da,proj_from=ccrs.PlateCarree(),
+def da_plot_zero_centered(da,proj_from=ccrs.PlateCarree(),with_colorbar=True,
                 z = [-3,-2,-1.5,-1,-0.5,0.5,1,1.5,2,3],
                 cmap_stdev = colors.LinearSegmentedColormap.from_list("", ["purple","darkblue","blue","lightblue","white","lightcoral","red","darkred","pink"])):
     
     norm = colors.TwoSlopeNorm(vmin=np.min(z), vcenter=0, vmax=np.max(z))
-    da.plot(transform=proj_from,cmap=cmap_stdev,norm=norm,levels=z,extend="both")
+    da.plot(transform=proj_from,cmap=cmap_stdev,norm=norm,levels=z,extend="both",add_colorbar=with_colorbar)
 
 def map_plot(proj_from=ccrs.PlateCarree(),proj_to=ccrs.NorthPolarStereo(central_longitude=-100),extent=True):
     axes = plt.axes(projection=proj_to)

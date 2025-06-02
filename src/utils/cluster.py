@@ -15,12 +15,19 @@ def array_to_xarray(array,xarray):
     )
     return new_xarray
 
-def area_weights(data_array,latitude_dim_name='latitude',R = 6371):
+def area_weights(data_array,latitude_dim_name='latitude',R = 6371,lon_res=0.25,lat_res=0.25):
     """
     Area of one grid cell (assuming spatial resolution is 0.25 x 0.25)
     """
     #R = 6371 km^2
-    return (R**2)*np.deg2rad(0.25)*np.deg2rad(0.25)*np.cos(np.deg2rad(data_array[latitude_dim_name]))
+    return (R**2)*np.deg2rad(lon_res)*np.deg2rad(lat_res)*np.cos(np.deg2rad(data_array[latitude_dim_name]))
+
+def calculate_grid_distances(data_array,latitude_dim_name='latitude', R=6371,lon_res=0.25,lat_res=0.25):
+  
+    lon_distance = R * np.deg2rad(lon_res) * np.cos(np.deg2rad(data_array[latitude_dim_name]))
+    lat_distance =  R * np.deg2rad(lat_res) * xr.ones_like(data_array[latitude_dim_name])
+
+    return lon_distance, lat_distance  
 
 def label_clusters(data_array, structure=None):
     """
@@ -52,7 +59,7 @@ def label_and_filter(ds,mask_dim='mask',area_dim='areas',label_dim='labeled_clus
         ds[label_filtered_dim]=np.minimum(ds[label_dim], 0)
     return ds
 
-def get_cluster_info(ds,label_dim="labeled_clusters",label_filtered_dim='labeled_clusters_filtered',anomaly_dim="anomaly_scaled",area_dim='areas',time_dim='time'):
+def get_cluster_info(ds,label_dim="labeled_clusters",label_filtered_dim='labeled_clusters_filtered',anomaly_dim="scaled_anomaly",area_dim='areas',time_dim='time'):
     """
     Returns a pandas data frame cointaining the information below about a cluster:
         label: cluster label
@@ -65,9 +72,24 @@ def get_cluster_info(ds,label_dim="labeled_clusters",label_filtered_dim='labeled
         min_lat,min_lon: indices of the minimum value of layer anomaly_dim coordinate (ds.longitude[min_lon],ds.latitude[min_lat])
         cm_lat,cm_lon: indices of the center of mass coordinate (ds.longitude[cm_lon],ds.latitude[cm_lat])
     """
+    # Define all columns upfront (your schema)
+    columns = [
+        'time', 'label', 'area', 'cm_lat', 
+        'cm_lon', 'mean', 'stdev', 'median', 
+        'min_value','min_lat','min_lon'
+    ]
+    # Create empty DataFrame with correct structure
+    if not ds['has_clusters'].values:
+        cluster_pd = pd.DataFrame(columns=columns)
+        return cluster_pd  # Return empty but structured DataFrame
+    if len(np.unique(ds[label_filtered_dim])) <= 1:
+        cluster_pd = pd.DataFrame(columns=columns)
+        return cluster_pd  # Return empty but structured DataFrame
     #-------------------------
+    #cluster_pd['label'] = np.unique(ds[label_filtered_dim].values)
+    #cluster_pd['area'] = ndimage.sum_labels(ds[area_dim],ds[label_filtered_dim],clusters_label)
     clusters_label = np.unique(ds[label_filtered_dim].values)
-    areas = ndimage.sum_labels(ds[area_dim],ds[label_dim],clusters_label)
+    areas = ndimage.sum_labels(ds[area_dim],ds[label_filtered_dim],clusters_label)
     #-------------------------
     cluster_pd = pd.DataFrame({"label": clusters_label,"area": areas})
     cluster_pd = cluster_pd[cluster_pd['label']>0]
@@ -76,12 +98,12 @@ def get_cluster_info(ds,label_dim="labeled_clusters",label_filtered_dim='labeled
     cluster_pd['time'] = ds[time_dim].values
     #-------------------------
     clusters_label = np.unique(cluster_pd['label'])
-    minimum = ndimage.minimum(ds[anomaly_dim],ds[label_dim],clusters_label)
-    stdev = ndimage.standard_deviation(ds[anomaly_dim],ds[label_dim],clusters_label)
-    median = ndimage.median(ds[anomaly_dim],ds[label_dim],clusters_label)
-    mean = ndimage.mean(ds[anomaly_dim],ds[label_dim],clusters_label)
+    minimum = ndimage.minimum(ds[anomaly_dim],ds[label_filtered_dim],clusters_label)
+    stdev = ndimage.standard_deviation(ds[anomaly_dim],ds[label_filtered_dim],clusters_label)
+    median = ndimage.median(ds[anomaly_dim],ds[label_filtered_dim],clusters_label)
+    mean = ndimage.mean(ds[anomaly_dim],ds[label_filtered_dim],clusters_label)
     #-------------------------
-    cm = ndimage.center_of_mass(ds[anomaly_dim].values,ds[label_dim].values,clusters_label)
+    cm = ndimage.center_of_mass(ds[anomaly_dim].values,ds[label_filtered_dim].values,clusters_label)
     cluster_pd[['cm_lat','cm_lon']] = cm #center of mass returns (latitude,longitude)
     #-------------------------
     cluster_pd['mean']= mean
@@ -89,7 +111,7 @@ def get_cluster_info(ds,label_dim="labeled_clusters",label_filtered_dim='labeled
     cluster_pd['median']= median
     cluster_pd['min_value']= minimum
     #-------------------------
-    cmin = ndimage.minimum_position(ds[anomaly_dim].values,ds[label_dim].values,clusters_label)
+    cmin = ndimage.minimum_position(ds[anomaly_dim].values,ds[label_filtered_dim].values,clusters_label)
     cluster_pd[['min_lat','min_lon']] = cmin #center of mass returns (latitude,longitude)
     cluster_pd['cm_lat'] = cluster_pd['cm_lat'].astype(int)
     cluster_pd['cm_lon'] = cluster_pd['cm_lon'].astype(int)
