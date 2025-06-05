@@ -28,6 +28,7 @@ class FileConfig:
     masked_anomaly_file: str = "seasonal_anomalies_masked.nc"
     cao_cluster_table: str = "cao_clusters.csv"
     cao_chain_table: str = "cao_chains.csv"
+    ocean_mask: str = "ocean_mask.nc"
     default_config: str = "config.yaml"
 
 @dataclass

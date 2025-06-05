@@ -118,7 +118,9 @@ def merge_nearby_labels_2d(labeled_array,distance_array=None,distance_threshold_
     
     return merged_labels
 
-def get_cluster_info(ds,label_dim="labeled_clusters",label_filtered_dim='labeled_clusters_filtered',anomaly_dim="scaled_anomaly",area_dim='areas',time_dim='time'):
+def get_cluster_info(ds,label_dim="labeled_clusters",label_filtered_dim='labeled_clusters_filtered',
+                     anomaly_dim="scaled_anomaly",area_dim='areas',time_dim='time',
+                     apply_ocean_mask=False, ocean_mask=None):
     """
     Returns a pandas data frame cointaining the information below about a cluster:
         label: cluster label
@@ -137,6 +139,8 @@ def get_cluster_info(ds,label_dim="labeled_clusters",label_filtered_dim='labeled
         'cm_lon', 'mean', 'stdev', 'median', 
         'min_value','min_lat','min_lon'
     ]
+    if apply_ocean_mask:
+        columns.append('land_fraction')
     # Create empty DataFrame with correct structure
     if not ds['has_clusters'].values:
         cluster_pd = pd.DataFrame(columns=columns)
@@ -174,6 +178,28 @@ def get_cluster_info(ds,label_dim="labeled_clusters",label_filtered_dim='labeled
     cluster_pd[['min_lat','min_lon']] = cmin #center of mass returns (latitude,longitude)
     cluster_pd['cm_lat'] = cluster_pd['cm_lat'].astype(int)
     cluster_pd['cm_lon'] = cluster_pd['cm_lon'].astype(int)
+
+    # === NEW: Ocean mask calculations ===
+    if apply_ocean_mask and ocean_mask is not None:
+        # Calculate land areas for each cluster
+        land_areas = ndimage.sum_labels(
+            ocean_mask.values, 
+            ds[label_filtered_dim].values, 
+            clusters_label
+        )
+        
+        # Calculate total pixel counts for each cluster (for land fraction)
+        pixel_counts = ndimage.sum_labels(
+            np.ones_like(ds[label_filtered_dim].values), 
+            ds[label_filtered_dim].values, 
+            clusters_label
+        )
+        
+        # Calculate land fraction for each cluster
+        land_fractions = land_areas / pixel_counts
+        
+        # Add land fraction to the dataframe
+        cluster_pd['land_fraction'] = land_fractions
 
     return cluster_pd
 
@@ -340,3 +366,41 @@ def process_in_chunks(ds, label_cao_output_dir,chunk_size_years=10):
         
         # Optional: explicitly free memory
         del ds_chunk
+
+def mask_ocean(da_ref,file_in = 'data/IMERG_land_sea_mask.nc',file_out = 'data/ocean_mask.nc'):
+
+    land_sea_mask = xr.open_dataarray(file_in)
+    # # Convert 0-360 longitude to -180 to 180
+    land_sea_mask = land_sea_mask.assign_coords(
+    lon=(((land_sea_mask.lon + 180) % 360) - 180)
+    ).sortby('lon').rename({'lat': 'latitude', 'lon': 'longitude'})
+
+    land_sea_mask = land_sea_mask.interp(
+    latitude=da_ref.latitude,
+    longitude=da_ref.longitude,
+    method='nearest'  # or 'nearest', 'cubic'
+    )
+
+    mask=land_sea_mask<100
+
+    # Define Greenland boundaries (approximate)
+    greenland_lat_min = 59  # degrees N
+    greenland_lat_max = 84  # degrees N  
+    greenland_lon_min = -75 # degrees W
+    greenland_lon_max = -10 # degrees W
+
+    # Create Greenland mask
+    greenland_mask = (
+        (mask.latitude >= greenland_lat_min) & 
+        (mask.latitude <= greenland_lat_max) &
+        (mask.longitude >= greenland_lon_min) & 
+        (mask.longitude <= greenland_lon_max)
+    )
+
+    # Set Greenland to ocean (1) in the mask
+    mask = mask.where(~greenland_mask, 0)
+
+    mask.to_netcdf(file_out)
+    #print('masking')
+    #ds[var_name] = ds[var_name].where(mask,0)
+    #print('end masking')
