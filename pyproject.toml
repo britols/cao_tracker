@@ -10,9 +10,11 @@ dependencies = [
     "dask>=2025.2.0",
     "distributed>=2025.2.0",
     "ipykernel>=6.29.5",
+    "joblib>=1.5.1",
     "matplotlib>=3.10.0",
     "netcdf4>=1.7.2",
     "psutil>=7.0.0",
     "scipy>=1.15.2",
+    "tqdm>=4.67.1",
     "xarray>=2025.1.2",
 ]

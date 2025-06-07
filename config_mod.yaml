@@ -1,0 +1,37 @@
+algorithm:
+  area_threshold: 500000
+  distance_threshold_km: 1000
+  min_stdev_threshold: 3
+  stdev_threshold: -1.5
+  temperature_var: daily_t2_min
+  time_group: season
+  time_group_period: DJF
+dataset:
+  anomaly_var: anomaly
+  area_var: areas
+  label_filtered_var: labeled_clusters_filtered
+  label_var: labeled_clusters
+  latitude_dim_name: latitude
+  latitude_spatial_res: 0.25
+  longitude_dim_name: longitude
+  longitude_spatial_res: 0.25
+  mask_var: mask
+  scaled_anomaly_var: scaled_anomaly
+  time_dim: time
+files:
+  anomaly_file: seasonal_anomalies.nc
+  cao_chain_table: cao_chains.csv
+  cao_cluster_table: cao_clusters.csv
+  default_config: config.yaml
+  masked_anomaly_file: seasonal_anomalies_masked.nc
+  mean_file: seasonal_mean.nc
+  ocean_mask: ocean_mask.nc
+  stdev_file: seasonal_stdev.nc
+paths:
+  csv_folder: results/csv/
+  data_path: data/
+  era5_path: data/full_data/era5_raw/
+  image_folder: results/img/
+  labeled_nc_folder: results/nc/labeled_nc/
+  nc_folder: results/nc/
+  test_path: test/
